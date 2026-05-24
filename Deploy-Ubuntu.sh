@@ -249,9 +249,14 @@ xray_inbound_conflict() {
   echo "none"
 }
 
+xray_mktemp_json() {
+  # Xray 26+ requires .json extension or -format=json for format detection
+  mktemp --suffix=.json 2>/dev/null || mktemp "${TMPDIR:-/tmp}/xhttp-cfg.XXXXXX.json"
+}
+
 xray_config_test_ok() {
   local cfg_file="$1" test_out
-  test_out=$(xray -test -config "$cfg_file" 2>&1 || true)
+  test_out=$(xray -test -format=json -config "$cfg_file" 2>&1 || true)
   echo "$test_out" | grep -qiE "configuration ok|Configuration OK"
 }
 
@@ -271,7 +276,7 @@ xray_apply_config() {
   fi
 
   if ! xray_config_test_ok "$candidate"; then
-    test_out=$(xray -test -config "$candidate" 2>&1 || true)
+    test_out=$(xray -test -format=json -config "$candidate" 2>&1 || true)
     fail "xray -test failed — config NOT applied (existing config unchanged)"
     echo "$test_out" | tail -15 | while IFS= read -r l; do info "  $l"; done
     return 1
@@ -497,7 +502,7 @@ relay_remove_cmd() {
   backup=$(xray_config_backup "$XRAY_CFG")
   [[ -n "$backup" ]] && info "Backup: ${backup}"
 
-  merged=$(mktemp)
+  merged=$(xray_mktemp_json)
   jq --arg t "$full_tag" '.inbounds |= map(select(.tag != $t))' "$XRAY_CFG" > "$merged"
   xray_apply_config "$merged" || { rm -f "$merged"; exit 1; }
   rm -f "$merged"
@@ -1470,7 +1475,7 @@ phase4b_configure_xray() {
   inbound_json=$(xray_build_inbound_json \
     "$CFG_RELAY_FULL_TAG" "$CFG_LISTEN_ADDR" "$CFG_INBOUND_PORT" \
     "$INBOUND_UUID" "$CFG_RELAY_PATH" "$CFG_DOMAIN" "${CFG_PLATFORM:-vercel}")
-  merged=$(mktemp)
+  merged=$(xray_mktemp_json)
   xray_merge_inbound "$merged" "$inbound_json" "$CFG_RELAY_FULL_TAG" "$replace" "$CFG_INBOUND_PORT"
 
   info "Applying merged config (existing inbounds preserved)..."
@@ -2441,7 +2446,7 @@ phase5_healthcheck() {
     local CLIENT_MODE="auto"
     local TEST_SOCKS_PORT=10809
     local TEST_CFG
-    TEST_CFG=$(mktemp --suffix=.json)
+    TEST_CFG=$(xray_mktemp_json)
     cat > "$TEST_CFG" <<E2ECFG
 {
   "log": {"loglevel": "debug"},
@@ -2878,7 +2883,7 @@ _unused_xray_knife_block() {
   fi
 
   local KNIFE_CFG
-  KNIFE_CFG=$(mktemp --suffix=.json)
+  KNIFE_CFG=$(xray_mktemp_json)
   cat > "$KNIFE_CFG" <<KNIFECFG
 {
   "log": {"loglevel": "warning"},
