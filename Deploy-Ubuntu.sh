@@ -250,7 +250,7 @@ xray_inbound_conflict() {
 }
 
 xray_mktemp_json() {
-  # Xray 26+ requires .json extension or -format=json for format detection
+  # Xray 26+ requires .json extension OR -format=json on xray -test / xray run
   mktemp --suffix=.json 2>/dev/null || mktemp "${TMPDIR:-/tmp}/xhttp-cfg.XXXXXX.json"
 }
 
@@ -589,11 +589,10 @@ autofix_diagnose() {
         fail "Key missing: ${SSL_KEY:-unset}"
       fi
       ;;
-    VERCEL)
+    VERCEL|vercel)
       curl -s --max-time 6 https://vercel.com -o /dev/null || { fail "Cannot reach vercel.com"; return; }
       command -v vercel &>/dev/null || { warn "Reinstalling vercel CLI..."; npm install -g vercel --silent && ok "vercel CLI reinstalled"; }
-      rm -rf "${VERCEL_DIR}/.vercel" 2>/dev/null || true
-      ok "Vercel link cache cleared — will re-link on retry"
+      _vercel_autofix_auth_link
       ;;
     FIREWALL)
       # Only add allow rules if UFW is ALREADY enabled — do NOT enable it ourselves.
@@ -646,6 +645,33 @@ autofix_and_retry() {
 }
 
 # =============================================================
+#  APT — tolerant update (bad third-party PPAs must not kill install)
+# =============================================================
+_apt_update_safe() {
+  local log rc=0
+  log=$(mktemp)
+  info "Updating package lists (tolerant mode — one bad repo will not abort install)..."
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq >"$log" 2>&1 || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    ok "Package lists updated"
+    rm -f "$log"
+    return 0
+  fi
+  warn "apt-get update returned errors — continuing anyway (main Ubuntu indexes may still work)"
+  info "Common cause: an outdated PPA (e.g. certbot) without a Release file for this Ubuntu version."
+  info "Disable broken entries manually under /etc/apt/sources.list.d/ if installs fail later."
+  grep -iE '^(Err:|W:|E:)|404|does not have a Release file|Failed to fetch|NO_PUBKEY' "$log" 2>/dev/null | \
+    sed 's/^/    /' | head -20 | while IFS= read -r l; do
+      echo -e "  ${C_GRAY}${l}${C_RESET}"
+    done
+  grep -oE 'https?://[^ )]+' "$log" 2>/dev/null | sort -u | head -8 | while IFS= read -r u; do
+    warn "Repo URL with errors: ${u}"
+  done
+  rm -f "$log"
+  return 0
+}
+
+# =============================================================
 #  PHASE 1 — PREFLIGHT: ROOT + OS + BASE PACKAGES
 # =============================================================
 phase1_preflight() {
@@ -669,8 +695,7 @@ phase1_preflight() {
     warn "Non-Ubuntu system — proceeding anyway"
   fi
 
-  info "Updating package lists..."
-  spin "Updating package lists (apt-get update)" -- bash -c 'apt-get update -qq'
+  _apt_update_safe
 
   spin "Installing base dependencies (curl, git, jq, dig, openssl, ...)" -- bash -c '
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
@@ -1540,16 +1565,231 @@ _restore_vercel_json() {
   return 0
 }
 
+# ── Vercel scope / link helpers (team tokens, stale .vercel cache) ──
+VERCEL_SCOPE_ARGS=()
+
+_vercel_build_scope_args() {
+  VERCEL_SCOPE_ARGS=()
+  [[ -n "${CFG_VERCEL_SCOPE:-}" ]] && VERCEL_SCOPE_ARGS=(--scope "$CFG_VERCEL_SCOPE")
+}
+
+# Redact token-like substrings before logging CLI output
+_vercel_sanitize_cli_log() {
+  sed -E 's/(Bearer[[:space:]]+)[^[:space:]'\'']+/\1[REDACTED]/Ig; s/([?&]token=)[^&[:space:]]+/\1[REDACTED]/Ig; s/(--token[[:space:]]+)[^[:space:]]+/\1[REDACTED]/Ig'
+}
+
+_vercel_auth_classify() {
+  local out="$1"
+  if echo "$out" | grep -qiE "invalid token|expired token|bad credentials|malformed token"; then
+    echo "token_invalid"
+  elif echo "$out" | grep -qiE "project not found|no project linked|linked to a different|\.vercel directory is invalid"; then
+    echo "stale_link"
+  elif echo "$out" | grep -qiE "not authorized|not a member|403 Forbidden|401 Unauthorized"; then
+    if [[ -z "${CFG_VERCEL_SCOPE:-}" ]]; then echo "scope_missing"; else echo "wrong_scope"; fi
+  elif echo "$out" | grep -qiE "scope .* not found|team .* (not found|does not exist)|invalid scope"; then
+    echo "wrong_scope"
+  else
+    echo "unknown"
+  fi
+}
+
+_vercel_print_auth_help() {
+  local kind="$1"
+  case "$kind" in
+    token_invalid)
+      fail "Vercel token is invalid or expired"
+      warn "Create a new token: https://vercel.com/account/tokens"
+      ;;
+    scope_missing)
+      fail "Vercel token requires a team scope ( --scope )"
+      info "Re-run and enter your team slug, or use a token with access to that team"
+      info "Team slug is shown in the Vercel dashboard URL: vercel.com/<team-slug>/..."
+      ;;
+    wrong_scope)
+      fail "Vercel team scope '${CFG_VERCEL_SCOPE:-?}' does not match this token"
+      info "Check the team slug in Vercel → Settings → General, or pick another team when prompted"
+      ;;
+    stale_link)
+      fail "deploy/vercel is linked to a different project or team"
+      info "The installer will clear .vercel / .env.local and re-link on retry"
+      ;;
+    *)
+      fail "Vercel authorization failed"
+      info "Check token, team scope, and that the project name is correct"
+      ;;
+  esac
+}
+
+_vercel_team_slugs_from_json() {
+  local json="$1"
+  command -v jq &>/dev/null || return 1
+  echo "$json" | jq -r '
+    if type == "array" then .[]
+    elif .teams then .teams[]
+    else empty end
+    | (.slug // .id // empty) | select(length > 0)' 2>/dev/null
+}
+
+_vercel_team_org_id_for_slug() {
+  local slug="$1" json
+  json=$(vercel teams ls --token "$CFG_VERCEL_TOKEN" --json 2>/dev/null || true)
+  command -v jq &>/dev/null || return 1
+  echo "$json" | jq -r --arg s "$slug" '
+    (if type == "array" then . elif .teams then .teams else [] end)
+    | .[] | select((.slug // "") == $s or (.id // "") == $s) | (.id // .teamId // empty)
+    ' 2>/dev/null | head -1
+}
+
+_vercel_resolve_scope() {
+  _vercel_build_scope_args
+  [[ -n "${CFG_VERCEL_SCOPE:-}" ]] && { ok "Vercel team scope: ${CFG_VERCEL_SCOPE}"; return 0; }
+
+  local whoami_out whoami_rc=0 teams_json team_slugs=() personal_ok=false
+  whoami_out=$(vercel whoami --token "$CFG_VERCEL_TOKEN" 2>&1) || whoami_rc=$?
+  if [[ $whoami_rc -eq 0 ]] && ! echo "$whoami_out" | grep -qiE "^(\s*)?Error:|invalid token|not authorized"; then
+    personal_ok=true
+  fi
+
+  teams_json=$(vercel teams ls --token "$CFG_VERCEL_TOKEN" --json 2>&1 || true)
+  if echo "$teams_json" | grep -qiE "invalid token|not authorized|Error:"; then
+    local kind
+    kind=$(_vercel_auth_classify "$teams_json")
+    [[ "$kind" == "unknown" ]] && kind="token_invalid"
+    _vercel_print_auth_help "$kind"
+    echo "$teams_json" | _vercel_sanitize_cli_log | head -3 | while IFS= read -r l; do info "  $l"; done
+    return 1
+  fi
+
+  mapfile -t team_slugs < <(_vercel_team_slugs_from_json "$teams_json" || true)
+  team_slugs=("${team_slugs[@]//[$'\t\r\n']/}")
+
+  if [[ ${#team_slugs[@]} -eq 0 ]]; then
+    if [[ "$personal_ok" == "true" ]]; then
+      ok "Vercel personal account (no team scope)"
+      return 0
+    fi
+    info "Could not list teams — will verify auth during deploy"
+    return 0
+  fi
+
+  if [[ ${#team_slugs[@]} -eq 1 ]]; then
+    CFG_VERCEL_SCOPE="${team_slugs[0]}"
+    _vercel_build_scope_args
+    ok "Auto-selected Vercel team scope: ${CFG_VERCEL_SCOPE}"
+    return 0
+  fi
+
+  echo -e "\n  ${C_CYAN}This token has access to multiple Vercel teams:${C_RESET}"
+  local i=1 s
+  for s in "${team_slugs[@]}"; do
+    echo -e "    ${C_YELLOW}${i}${C_RESET}) ${s}"
+    i=$((i + 1))
+  done
+  echo -e "    ${C_YELLOW}0${C_RESET}) Personal account (no team scope)"
+  local pick
+  while true; do
+    read -rp "$(echo -e "  ${C_WHITE}Choose team [1-${#team_slugs[@]}] or 0 for personal${C_RESET}: ")" pick
+    if [[ "$pick" == "0" ]]; then
+      CFG_VERCEL_SCOPE=""
+      _vercel_build_scope_args
+      ok "Using personal Vercel account"
+      return 0
+    fi
+    if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#team_slugs[@]} )); then
+      CFG_VERCEL_SCOPE="${team_slugs[$((pick - 1))]}"
+      _vercel_build_scope_args
+      ok "Using team scope: ${CFG_VERCEL_SCOPE}"
+      return 0
+    fi
+    fail "Invalid choice."
+  done
+}
+
+_vercel_clean_link_cache() {
+  rm -rf "${VERCEL_DIR}/.vercel" "${VERCEL_DIR}/.env.local" 2>/dev/null || true
+}
+
+# Returns 0 if .vercel/project.json does not match current project/scope
+_vercel_project_link_mismatch() {
+  local pj="${VERCEL_DIR}/.vercel/project.json"
+  [[ -f "$pj" ]] || return 0
+
+  if ! command -v jq &>/dev/null || ! jq -e . "$pj" &>/dev/null; then
+    return 0
+  fi
+
+  local linked_name linked_org expected_org
+  linked_name=$(jq -r '.projectName // .name // empty' "$pj" 2>/dev/null)
+  linked_org=$(jq -r '.orgId // empty' "$pj" 2>/dev/null)
+
+  if [[ -n "$linked_name" && "$linked_name" != "$CFG_PROJECT_NAME" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${CFG_VERCEL_SCOPE:-}" ]]; then
+    expected_org=$(_vercel_team_org_id_for_slug "$CFG_VERCEL_SCOPE")
+    if [[ -n "$expected_org" && -n "$linked_org" && "$linked_org" != "$expected_org" ]]; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+_vercel_ensure_link() {
+  local scope_args=("${VERCEL_SCOPE_ARGS[@]}")
+  if [[ -f "${VERCEL_DIR}/.vercel/project.json" ]] && ! _vercel_project_link_mismatch; then
+    ok "Vercel project link OK (${CFG_PROJECT_NAME}${CFG_VERCEL_SCOPE:+, scope ${CFG_VERCEL_SCOPE}})"
+    return 0
+  fi
+
+  if [[ -f "${VERCEL_DIR}/.vercel/project.json" ]]; then
+    warn "Stale Vercel link (project or team mismatch) — clearing cache and re-linking"
+  fi
+  _vercel_clean_link_cache
+
+  local link_out link_rc
+  link_out=$(vercel link --yes --project "$CFG_PROJECT_NAME" \
+    --token "$CFG_VERCEL_TOKEN" "${scope_args[@]}" 2>&1); link_rc=$?
+  if [[ $link_rc -eq 0 ]] || echo "$link_out" | grep -qiE "Linked to|Already linked"; then
+    return 0
+  fi
+  warn "vercel link failed:"
+  echo "$link_out" | _vercel_sanitize_cli_log | tail -5 | while IFS= read -r l; do
+    echo -e "  ${C_GRAY}  $l${C_RESET}"
+  done
+  return 1
+}
+
+_vercel_autofix_auth_link() {
+  info "AutoFix: resolving team scope (if needed) and refreshing project link..."
+  _vercel_resolve_scope || true
+  _vercel_build_scope_args
+  _vercel_clean_link_cache
+  ok "Cleared .vercel / .env.local — will re-link on next deploy step"
+  return 0
+}
+
 _vercel_diagnose_deploy_error() {
   local out="$1"
   echo -e "\n  ${C_MAGENTA}[AutoFix/Vercel]${C_RESET} Analysing deploy error..."
 
-  # ── Token / Auth — match strict patterns to avoid false positives ──
-  if echo "$out" | grep -qiE "Error: (Invalid token|Not authorized)|invalid_token|401 Unauthorized|403 Forbidden|expired token"; then
-    fail "Auth error — Vercel token is invalid or expired"
-    warn "Fix: go to https://vercel.com/account/tokens and create a new token"
-    warn "Then re-run this script and paste the new token"
-    return 1
+  # ── Auth — classify before blaming the token ──
+  if echo "$out" | grep -qiE "Error: (Invalid token|Not authorized)|invalid_token|401 Unauthorized|403 Forbidden|expired token|not a member|invalid scope"; then
+    local auth_kind
+    auth_kind=$(_vercel_auth_classify "$out")
+    _vercel_print_auth_help "$auth_kind"
+    case "$auth_kind" in
+      scope_missing|wrong_scope|stale_link)
+        _vercel_autofix_auth_link
+        return 0
+        ;;
+      token_invalid) return 1 ;;
+      *)
+        _vercel_autofix_auth_link
+        return 0
+        ;;
+    esac
   fi
 
   # ── Rate limit ──────────────────────────────────────────
@@ -1572,8 +1812,8 @@ _vercel_diagnose_deploy_error() {
 
   # ── Link / project.json stale ─ specific Vercel messages only ────
   if echo "$out" | grep -qiE "project not found|no project linked|linked to a different|\.vercel directory is invalid"; then
-    warn "Stale project link — clearing .vercel cache (will re-link before retry)"
-    rm -rf "${VERCEL_DIR}/.vercel" 2>/dev/null || true
+    warn "Stale project link — clearing .vercel / .env.local (will re-link before retry)"
+    _vercel_clean_link_cache
     return 0
   fi
 
@@ -1626,10 +1866,10 @@ _vercel_diagnose_deploy_error() {
     return 1
   fi
 
-  # ── Scope / team error — strict patterns ────────────────
+  # ── Scope / team error — do not clear scope; fix link and re-resolve ──
   if echo "$out" | grep -qiE "scope .* not found|team .* (not found|does not exist)|not a member of|invalid scope"; then
-    warn "Scope/team error — clearing scope and retrying without team"
-    CFG_VERCEL_SCOPE=""
+    _vercel_print_auth_help "wrong_scope"
+    _vercel_autofix_auth_link
     return 0
   fi
 
@@ -1658,38 +1898,48 @@ phase4c_vercel_deploy() {
 
   export VERCEL_TOKEN="${CFG_VERCEL_TOKEN}"
 
-  local scope_args=()
-  [[ -n "${CFG_VERCEL_SCOPE:-}" ]] && scope_args=(--scope "$CFG_VERCEL_SCOPE")
+  # ── Resolve team scope once (auto-detect / prompt) ───────
+  _vercel_resolve_scope || { popd > /dev/null; return 1; }
+  local scope_args=("${VERCEL_SCOPE_ARGS[@]}")
 
-  # ── Validate token (re-prompt if invalid) ───────────────
-  # Success output: just a username on one line, exit 0.
-  # Failure output: contains "Error:" prefix or known auth keywords, exit !=0.
-  # Team tokens need --scope; if whoami still fails with scope set, continue to deploy.
-  local whoami_out whoami_rc attempt=0
+  # ── Validate token (re-prompt only if truly invalid) ────
+  local whoami_out whoami_rc attempt=0 auth_kind
   while [[ $attempt -lt 3 ]]; do
     attempt=$(( attempt + 1 ))
     whoami_out=$(vercel whoami --token "$CFG_VERCEL_TOKEN" "${scope_args[@]}" 2>&1); whoami_rc=$?
-    # Only treat as failure if exit code != 0 OR output starts with explicit Error:
-    if [[ $whoami_rc -ne 0 ]] || echo "$whoami_out" | grep -qiE "^(\s*)?Error:|invalid token|forbidden|401|403|unauthorized|not authorized"; then
-      if [[ -n "${CFG_VERCEL_SCOPE:-}" ]]; then
-        warn "vercel whoami failed with team scope '${CFG_VERCEL_SCOPE}' — continuing (deploy will verify auth)"
-        info "whoami response: $(echo "$whoami_out" | head -3)"
-        break
-      fi
+    if [[ $whoami_rc -eq 0 ]] && ! echo "$whoami_out" | grep -qiE "^(\s*)?Error:|invalid token|forbidden|401|403|unauthorized|not authorized"; then
+      ok "Vercel auth OK: $(echo "$whoami_out" | head -1 | tr -d '[:space:]')"
+      break
+    fi
+    auth_kind=$(_vercel_auth_classify "$whoami_out")
+    if [[ "$auth_kind" == "scope_missing" || "$auth_kind" == "wrong_scope" ]]; then
+      _vercel_print_auth_help "$auth_kind"
+      CFG_VERCEL_SCOPE=$(read_default "Vercel team slug (scope)" "${CFG_VERCEL_SCOPE:-}")
+      _vercel_build_scope_args
+      scope_args=("${VERCEL_SCOPE_ARGS[@]}")
+      continue
+    fi
+    if [[ -n "${CFG_VERCEL_SCOPE:-}" && "$auth_kind" != "token_invalid" ]]; then
+      warn "vercel whoami inconclusive with team scope — continuing (deploy will verify)"
+      echo "$whoami_out" | _vercel_sanitize_cli_log | head -3 | while IFS= read -r l; do info "  $l"; done
+      break
+    fi
+    if [[ "$auth_kind" == "token_invalid" ]]; then
       fail "Vercel token invalid (attempt $attempt/3)"
-      info "Server response: $(echo "$whoami_out" | head -3)"
-      warn "Get a token from: https://vercel.com/account/tokens"
+      echo "$whoami_out" | _vercel_sanitize_cli_log | head -3 | while IFS= read -r l; do info "  $l"; done
+      warn "Create a token: https://vercel.com/account/tokens"
       [[ $attempt -ge 3 ]] && { fail "Cannot authenticate to Vercel after 3 attempts."; popd > /dev/null; return 1; }
       CFG_VERCEL_TOKEN=$(read_secret "Paste new Vercel token")
       export VERCEL_TOKEN="${CFG_VERCEL_TOKEN}"
+      _vercel_resolve_scope || { popd > /dev/null; return 1; }
+      scope_args=("${VERCEL_SCOPE_ARGS[@]}")
     else
-      ok "Vercel auth OK: $(echo "$whoami_out" | head -1 | tr -d '[:space:]')"
+      warn "vercel whoami check skipped — deploy will verify authorization"
       break
     fi
   done
 
   # ── Create / ensure project ─────────────────────────────
-
   info "Creating Vercel project '${CFG_PROJECT_NAME}'..."
   local proj_out proj_rc
   proj_out=$(vercel project add "$CFG_PROJECT_NAME" --token "$CFG_VERCEL_TOKEN" \
@@ -1704,22 +1954,8 @@ phase4c_vercel_deploy() {
     echo "$proj_out" | tail -5 | while IFS= read -r l; do echo -e "  ${C_GRAY}  $l${C_RESET}"; done
   fi
 
-  # ── Link helper — re-runnable from anywhere in the flow ─────
-  _vercel_link() {
-    rm -rf "${VERCEL_DIR}/.vercel" 2>/dev/null || true
-    local link_out link_rc
-    link_out=$(vercel link --yes --project "$CFG_PROJECT_NAME" \
-      --token "$CFG_VERCEL_TOKEN" "${scope_args[@]}" 2>&1); link_rc=$?
-    if [[ $link_rc -ne 0 ]] && ! echo "$link_out" | grep -qiE "Linked to|Already linked"; then
-      warn "Link failed:"
-      echo "$link_out" | tail -5 | while IFS= read -r l; do echo -e "  ${C_GRAY}  $l${C_RESET}"; done
-      return 1
-    fi
-    return 0
-  }
-
   info "Linking to project..."
-  _vercel_link || { fail "Could not link to project $CFG_PROJECT_NAME"; popd > /dev/null; return 1; }
+  _vercel_ensure_link || { fail "Could not link to project $CFG_PROJECT_NAME"; popd > /dev/null; return 1; }
   ok "Linked to $CFG_PROJECT_NAME"
 
   # ── Disable Deployment Protection via REST API ──────────
@@ -1811,13 +2047,12 @@ phase4c_vercel_deploy() {
     if ! _vercel_diagnose_deploy_error "$deploy_out"; then
       [[ $deploy_attempt -ge $AUTOFIX_MAX ]] && { fail "Deploy failed after $AUTOFIX_MAX attempts. See: $LOG_FILE"; popd > /dev/null; return 1; }
     fi
-    # refresh scope_args in case CFG_VERCEL_SCOPE was cleared by diagnose
-    scope_args=()
-    [[ -n "${CFG_VERCEL_SCOPE:-}" ]] && scope_args=(--scope "$CFG_VERCEL_SCOPE")
+    _vercel_build_scope_args
+    scope_args=("${VERCEL_SCOPE_ARGS[@]}")
     # If diagnose cleared .vercel cache, we MUST re-link before next deploy
     if [[ ! -d "${VERCEL_DIR}/.vercel" ]]; then
       info "Re-linking project after cache clear..."
-      _vercel_link || warn "Re-link failed — next deploy may still fail"
+      _vercel_ensure_link || warn "Re-link failed — next deploy may still fail"
     fi
     sleep 3
   done
