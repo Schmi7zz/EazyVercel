@@ -2,7 +2,7 @@
 
 # EazyVercel — Multi-Relay XHTTP Installer
 
-### 🌐 Automated VLESS + XHTTP + TLS proxy with multiple Vercel/Netlify relays on a single server
+### 🌐 Automated VLESS + XHTTP + TLS proxy with multiple Vercel/Netlify relays on a single server with a single domain
 
 **🌐 Language:** [🇮🇷 فارسی](#فارسی) • [🇬🇧 English](#english)
 
@@ -82,7 +82,7 @@ This tool exists to help people bypass unjust internet censorship and protect th
 
 ### Credits
 
-- Based on [avacocloud/XHTTP-Installer](https://github.com/avacocloud/XHTTP-Installer) by **avaco_cloud**. All credit for the original installer goes to them.
+- Based on [avacocloud/XHTTP-Installer](https://github.com/avacocloud/XHTTP-Installer) by **avaco_cloud**. All credit for the original nod relay goes to them.
 - Multi-relay modifications by [@schmi7zz](https://t.me/schmi7zz).
 - Built on [Xray-core](https://github.com/XTLS/Xray-core).
 
@@ -168,7 +168,7 @@ sudo bash Deploy-Ubuntu.sh --remove relay-b  # حذف یک رله
 
 ### اعتبارها
 
-- بر پایهٔ [avacocloud/XHTTP-Installer](https://github.com/avacocloud/XHTTP-Installer) از **avaco_cloud**. تمام اعتبار نصب‌کنندهٔ اصلی متعلق به ایشان است.
+- بر پایهٔ [avacocloud/XHTTP-Installer](https://github.com/avacocloud/XHTTP-Installer) از **avaco_cloud**. تمام اعتبار نودهای اصلی متعلق به ایشان است.
 - تغییرات چندرله توسط [@schmi7zz](https://t.me/schmi7zz).
 - ساخته‌شده بر پایهٔ [Xray-core](https://github.com/XTLS/Xray-core).
 
