@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.x   | ✅        |
+| 1.0.0   | ✅        |
+| 1.0.2   | ✅        |
 
 ## Reporting a Vulnerability
 
@@ -12,7 +13,7 @@ If you discover a security vulnerability in this project, please **do not** open
 
 Instead, please report it privately:
 
-1. Send a message to [@avaco_cloud](https://t.me/avaco_cloud) on Telegram
+1. Send a message to [@Schmi7zz](https://t.me/Schmi7zz) on Telegram
 2. Include:
    - Description of the vulnerability
    - Steps to reproduce
@@ -24,7 +25,7 @@ Instead, please report it privately:
 - **Never share your tokens**: Vercel/Netlify tokens should be kept private
 - **Use strong passwords**: For your server and CDN accounts
 - **Keep dependencies updated**: Run updates regularly
-- **Monitor logs**: Check `/tmp/xhttp-install.log` for any suspicious activity
+- **Monitor logs**: Check `/tmp/EazyVercel.log` for any suspicious activity
 - **Use HTTPS only**: This installer automatically configures SSL/TLS
 
 ## Known Security Considerations
@@ -47,4 +48,4 @@ This project is licensed under GPL-3.0. Unauthorized modification or redistribut
 
 ---
 
-**Copyright © 2025 [@avaco_cloud](https://t.me/avaco_cloud)**
+**Copyright © 2026 [@Schmi7zz](https://t.me/Schmi7zz)**
