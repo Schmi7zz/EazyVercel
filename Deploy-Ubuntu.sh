@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================
-#  XHTTP Installer — avaco_cloud
-#  Ubuntu Server | VLESS+XHTTP Auto-Installer
+#  Multi XHTTP Relay Installer — Schmi7zz
+#  Ubuntu Server | VLESS+XHTTP Auto-Installer + Multi Relays on a Single VPS + Domain
 # -------------------------------------------------------------
-#  Copyright (C) 2025 avaco_cloud
-#  Repository: https://github.com/avacocloud/XHTTP-Installer
-#  Author:     @avaco_cloud (https://t.me/avaco_cloud)
+#  Copyright (C) 2025 Schmi7zz
+#  Repository: https://github.com/schmi7zz/EazyVercel
+#  Author:     @Schmi7zz (https://t.me/Schmitzws)
 #
 #  Licensed under the GNU General Public License v3.0 (GPL-3.0).
 #  See LICENSE file for full terms.
@@ -16,11 +16,8 @@
 # =============================================================
 set -euo pipefail
 
-# Build identifier — do not remove (used for integrity verification)
-readonly AVC_BUILD_ID="avc-7f3a92e1-2025-avacocloud"
-export AVC_BUILD_ID
 
-LOG_FILE="/tmp/xhttp-install.log"
+LOG_FILE="/tmp/EazyVercel.log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 
 drain_process_substitution_source() {
@@ -42,7 +39,7 @@ drain_process_substitution_source() {
 # Auto-download the full repo into /opt/xhttp-installer and re-exec from there.
 if [[ -z "$SCRIPT_DIR" || ! -d "${SCRIPT_DIR}/deploy" ]]; then
   REPO_DIR="/opt/xhttp-installer"
-  REPO_URL="https://github.com/avacocloud/XHTTP-Installer.git"
+  REPO_URL="https://github.com/Schmi7zz/EazyVercel.git"
   echo ">> Detected remote-piped run — fetching full repo to ${REPO_DIR}..."
   if [[ ! -d "$REPO_DIR/.git" ]]; then
     if command -v git >/dev/null 2>&1; then
@@ -81,29 +78,30 @@ C_WHITE="\033[1;37m"
 print_banner() {
   clear
   echo ""
-  echo -e "   ${C_CYAN}██╗  ██╗${C_WHITE}██╗  ██╗████████╗████████╗██████╗ ${C_RESET}"
-  echo -e "   ${C_CYAN}╚██╗██╔╝${C_WHITE}██║  ██║╚══██╔══╝╚══██╔══╝██╔══██╗${C_RESET}"
-  echo -e "    ${C_CYAN}╚███╔╝ ${C_WHITE}███████║   ██║      ██║   ██████╔╝${C_RESET}"
-  echo -e "    ${C_CYAN}██╔██╗ ${C_WHITE}██╔══██║   ██║      ██║   ██╔═══╝ ${C_RESET}"
-  echo -e "   ${C_CYAN}██╔╝ ██╗${C_WHITE}██║  ██║   ██║      ██║   ██║     ${C_RESET}"
-  echo -e "   ${C_CYAN}╚═╝  ╚═╝${C_WHITE}╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚═╝     ${C_RESET}"
+  echo -e "   ${C_CYAN}███████╗${C_WHITE} █████╗ ███████╗██╗   ██╗${C_RESET}"
+  echo -e "   ${C_CYAN}██╔════╝${C_WHITE}██╔══██╗╚══███╔╝╚██╗ ██╔╝${C_RESET}"
+  echo -e "   ${C_CYAN}█████╗  ${C_WHITE}███████║  ███╔╝  ╚████╔╝ ${C_RESET}"
+  echo -e "   ${C_CYAN}██╔══╝  ${C_WHITE}██╔══██║ ███╔╝    ╚██╔╝  ${C_RESET}"
+  echo -e "   ${C_CYAN}███████╗${C_WHITE}██║  ██║███████╗   ██║   ${C_RESET}"
+  echo -e "   ${C_CYAN}╚══════╝${C_WHITE}╚═╝  ╚═╝╚══════╝   ╚═╝   ${C_RESET}"
   echo ""
-  echo -e "   ${C_YELLOW}██╗███╗   ██╗███████╗████████╗ █████╗ ██╗     ██╗     ███████╗██████╗ ${C_RESET}"
-  echo -e "   ${C_YELLOW}██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗██║     ██║     ██╔════╝██╔══██╗${C_RESET}"
-  echo -e "   ${C_YELLOW}██║██╔██╗ ██║███████╗   ██║   ███████║██║     ██║     █████╗  ██████╔╝${C_RESET}"
-  echo -e "   ${C_YELLOW}██║██║╚██╗██║╚════██║   ██║   ██╔══██║██║     ██║     ██╔══╝  ██╔══██╗${C_RESET}"
-  echo -e "   ${C_YELLOW}██║██║ ╚████║███████║   ██║   ██║  ██║███████╗███████╗███████╗██║  ██║${C_RESET}"
-  echo -e "   ${C_YELLOW}╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝${C_RESET}"
+  echo -e "   ${C_YELLOW}██╗   ██╗███████╗██████╗  ██████╗███████╗██╗     ${C_RESET}"
+  echo -e "   ${C_YELLOW}██║   ██║██╔════╝██╔══██╗██╔════╝██╔════╝██║     ${C_RESET}"
+  echo -e "   ${C_YELLOW}██║   ██║█████╗  ██████╔╝██║     █████╗  ██║     ${C_RESET}"
+  echo -e "   ${C_YELLOW}╚██╗ ██╔╝██╔══╝  ██╔══██╗██║     ██╔══╝  ██║     ${C_RESET}"
+  echo -e "   ${C_YELLOW} ╚████╔╝ ███████╗██║  ██║╚██████╗███████╗███████╗${C_RESET}"
+  echo -e "   ${C_YELLOW}  ╚═══╝  ╚══════╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚══════╝${C_RESET}"
   echo ""
-  echo -e "          ${C_MAGENTA}★${C_RESET}  ${C_WHITE}a v a c o _ c l o u d${C_RESET}  ${C_MAGENTA}★${C_RESET}"
+  echo -e "          ${C_MAGENTA}★${C_RESET}  ${C_WHITE}s c h m i 7 z z${C_RESET}  ${C_MAGENTA}★${C_RESET}"
   echo -e "          ${C_GRAY}─────────────────────────${C_RESET}"
   echo -e "          ${C_GRAY}VLESS + XHTTP + TLS${C_RESET}"
-  echo -e "          ${C_GRAY}Ubuntu Auto-Installer${C_RESET}"
+  echo -e "          ${C_GRAY}Multi-Relay Edition${C_RESET}"
   echo -e "          ${C_GRAY}Relay: Vercel / Netlify${C_RESET}"
-  echo -e "          ${C_GRAY}t.me/avaco_cloud${C_RESET}"
+  echo -e "          ${C_GRAY}t.me/schmitzws${C_RESET}"
+  echo ""
+  echo -e "          ${C_GRAY}based on XHTTP-Installer by avaco_cloud${C_RESET}"
   echo ""
 }
-
 step() { echo -e "\n${C_CYAN}>> $1${C_RESET}"; }
 ok()   { echo -e "${C_GREEN}   ✔ $1${C_RESET}"; }
 warn() { echo -e "${C_YELLOW}   ⚠ $1${C_RESET}"; }
@@ -3285,7 +3283,7 @@ _banner() {
   echo ""
   echo -e "   ${C_CYAN}╔══════════════════════════════════════════╗${C_RESET}"
   echo -e "   ${C_CYAN}║${C_WHITE}        XHTTP Installer — Panel         ${C_CYAN}║${C_RESET}"
-  echo -e "   ${C_CYAN}║${C_GRAY}        avaco_cloud · t.me/avaco_cloud   ${C_CYAN}║${C_RESET}"
+  echo -e "   ${C_CYAN}║${C_GRAY}        Schmi7zz · t.me/Schmitzws   ${C_CYAN}║${C_RESET}"
   echo -e "   ${C_CYAN}╚══════════════════════════════════════════╝${C_RESET}"
   echo ""
 }
@@ -3383,7 +3381,7 @@ _view_logs() {
     1) tail -n 30 /var/log/xray/error.log 2>/dev/null || echo "no log"; read -rp "Enter..." _;;
     2) tail -n 30 /var/log/xray/access.log 2>/dev/null || echo "no log"; read -rp "Enter..." _;;
     3) journalctl -u xray -n 50 --no-pager; read -rp "Enter..." _;;
-    4) tail -n 100 "${LOG_FILE:-/tmp/xhttp-install.log}" 2>/dev/null || echo "no log"; read -rp "Enter..." _;;
+    4) tail -n 100 "${LOG_FILE:-/tmp/EazyVercel.log}" 2>/dev/null || echo "no log"; read -rp "Enter..." _;;
   esac
 }
 
@@ -3425,7 +3423,7 @@ _update_script() {
   else
     echo -e "  ${C_YELLOW}No existing checkout — cloning fresh...${C_RESET}"
     git clone --depth=1 --branch main \
-      "https://github.com/avacocloud/XHTTP-Installer.git" "$TARGET_DIR" 2>&1 | tail -5
+      "https://github.com/Schmi7zz/EazyVercel.git" "$TARGET_DIR" 2>&1 | tail -5
   fi
 
   echo ""
