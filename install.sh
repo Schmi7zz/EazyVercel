@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 # =============================================================
-#  XHTTP Installer — Bootstrap
-#  Copyright (C) 2025 avaco_cloud
-#  Repository: https://github.com/avacocloud/XHTTP-Installer
-#  Licensed under GPL-3.0. See LICENSE file.
+#  Multi XHTTP Relay Installer — Schmi7zz
+#  Ubuntu Server | VLESS+XHTTP Auto-Installer + Multi Relays on a Single VPS + Domain
+# -------------------------------------------------------------
+#  Copyright (C) 2025 Schmi7zz
+#  Repository: https://github.com/schmi7zz/EazyVercel
+#  Author:     @Schmi7zz (https://t.me/Schmitzws)
+#
+#  Licensed under the GNU General Public License v3.0 (GPL-3.0).
+#  See LICENSE file for full terms.
+#
+#  Redistribution requires preserving this copyright notice and
+#  the LICENSE file. Unauthorized removal of attribution is a
+#  copyright violation and will result in a DMCA takedown.
 # =============================================================
-# Usage: bash <(curl -fsSL https://raw.githubusercontent.com/avacocloud/XHTTP-Installer/main/install.sh)
+# Usage: bash <(curl -fsSL https://raw.githubusercontent.com/schmi7zz/EazyVercel/main/install.sh)
 
 set -euo pipefail
 
-readonly AVC_BUILD_ID="avc-7f3a92e1-2025-avacocloud"
-export AVC_BUILD_ID
-
-REPO_URL="https://github.com/avacocloud/XHTTP-Installer.git"
-TARGET_DIR="/root/XHTTP-Installer"
+REPO_URL="https://github.com/Schmi7zz/EazyVercel.git"
+TARGET_DIR="/root/EazyVercel"
 BRANCH="main"
 
 C_CYAN="\033[1;36m"; C_GREEN="\033[1;32m"; C_YELLOW="\033[1;33m"
