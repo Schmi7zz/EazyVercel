@@ -1658,15 +1658,24 @@ phase4c_vercel_deploy() {
 
   export VERCEL_TOKEN="${CFG_VERCEL_TOKEN}"
 
+  local scope_args=()
+  [[ -n "${CFG_VERCEL_SCOPE:-}" ]] && scope_args=(--scope "$CFG_VERCEL_SCOPE")
+
   # ── Validate token (re-prompt if invalid) ───────────────
   # Success output: just a username on one line, exit 0.
   # Failure output: contains "Error:" prefix or known auth keywords, exit !=0.
+  # Team tokens need --scope; if whoami still fails with scope set, continue to deploy.
   local whoami_out whoami_rc attempt=0
   while [[ $attempt -lt 3 ]]; do
     attempt=$(( attempt + 1 ))
-    whoami_out=$(vercel whoami --token "$CFG_VERCEL_TOKEN" 2>&1); whoami_rc=$?
+    whoami_out=$(vercel whoami --token "$CFG_VERCEL_TOKEN" "${scope_args[@]}" 2>&1); whoami_rc=$?
     # Only treat as failure if exit code != 0 OR output starts with explicit Error:
-    if [[ $whoami_rc -ne 0 ]] || echo "$whoami_out" | grep -qiE "^(\s*)?Error:|invalid token|forbidden|401|403|unauthorized"; then
+    if [[ $whoami_rc -ne 0 ]] || echo "$whoami_out" | grep -qiE "^(\s*)?Error:|invalid token|forbidden|401|403|unauthorized|not authorized"; then
+      if [[ -n "${CFG_VERCEL_SCOPE:-}" ]]; then
+        warn "vercel whoami failed with team scope '${CFG_VERCEL_SCOPE}' — continuing (deploy will verify auth)"
+        info "whoami response: $(echo "$whoami_out" | head -3)"
+        break
+      fi
       fail "Vercel token invalid (attempt $attempt/3)"
       info "Server response: $(echo "$whoami_out" | head -3)"
       warn "Get a token from: https://vercel.com/account/tokens"
@@ -1680,8 +1689,6 @@ phase4c_vercel_deploy() {
   done
 
   # ── Create / ensure project ─────────────────────────────
-  local scope_args=()
-  [[ -n "${CFG_VERCEL_SCOPE:-}" ]] && scope_args=(--scope "$CFG_VERCEL_SCOPE")
 
   info "Creating Vercel project '${CFG_PROJECT_NAME}'..."
   local proj_out proj_rc
